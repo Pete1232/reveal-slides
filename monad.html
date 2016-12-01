@@ -1,0 +1,466 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>reveal.js</title>
+
+    <link rel="stylesheet" href="css/reveal.css">
+    <link rel="stylesheet" href="css/theme/black.css">
+
+    <!-- Theme used for syntax highlighting of code -->
+    <link rel="stylesheet" href="lib/css/zenburn.css">
+
+    <!-- Printing and PDF exports -->
+    <script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+</head>
+<body>
+<div class="reveal">
+    <div class="slides">
+        <!------------------------------------------------------------------------------------------------------------->
+        <!------------------------------------------------------------------------------------------------------------->
+
+        <section data-background="#dddddd">
+            <h1>Monads overview</h1>
+            <h3>For developers - no maths degree required</h3>
+        </section>
+
+        <!------------------------------------------------------------------------------------------------------------->
+        <!------------------------------------------------------------------------------------------------------------->
+
+        <section data-background="#dddddd">
+            <section>
+                <h3>Combining data structures</h3>
+                <h4>What if we wanted to combine two Option values?</h4>
+                <pre>
+                    <code>
+val option1 = Some("Alice")
+val option2 = Some("Bob")
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h4>Option 1: Using map / flatMap</h4>
+                <pre>
+                    <code>
+option1.flatMap( alice =>
+    option2.map ( bob =>
+        combine(alice, bob)
+    )
+)
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h4>Option 2: Using a for-comprehension</h4>
+                <pre>
+                    <code>
+for{
+    alice <- option1
+    bob <- option2
+} yield combine(alice, bob)
+                    </code>
+                </pre>
+            </section>
+
+            <section>
+                <h4>How about an Option wrapped in a Future</h4>
+                <pre>
+                    <code>
+val futureo1 = Future.successful(Some("Alice"))
+val futureo2 = Future.successful(Some("Bob"))
+                    </code>
+                </pre>
+                <p>(Or maybe a more practical example from ReactiveMongo)</p>
+                <pre>
+                    <code>
+def one[T](implicit reader: pack.Reader[T], ec: ExecutionContext)
+                        : Future[Option[T]]
+                    </code>
+                </pre>
+            </section>
+
+            <section>
+                <h4>We have to use the map / flatMap option</h4>
+                <p>Using the methods on Future and Option to unwrap the values</p>
+                <pre>
+                    <code>
+futureo1.flatMap( maybeAlice =>
+  futureo2.map( maybeBob =>
+    maybeAlice.flatMap( alice =>
+      maybeBob.map( bob =>
+        alice + " and " + bob
+      )
+    )
+  )
+)
+                    </code>
+                </pre>
+                <p>Not pretty or easy to use.</p>
+                <p>What if we wanted to combine 3? 4? 10?</p>
+            </section>
+
+            <section>
+                <h4>What would we like to do?</h4>
+                <p>The same thing that we did for option</p>
+                                <pre>
+                    <code>
+for{
+    alice <- futureo1
+    bob <- futureo2
+} yield combine(alice, bob)
+                    </code>
+                </pre>
+                <p>So what we need is a Future[Option] class, with map and flatMap methods of its own!</p>
+            </section>
+        </section>
+
+        <!------------------------------------------------------------------------------------------------------------->
+        <!------------------------------------------------------------------------------------------------------------->
+
+        <section data-background="#dddddd">
+            <section>
+                <h3>Step-by-step</h3>
+                <p>First we need a class that can wrap a Future[Option]</p>
+                <pre>
+                    <code>
+case class FutureO[A](fo: Future[Option[A]])
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Step-by-step</h3>
+                <p>The next thing we need is a flatMap</p>
+                <pre>
+                    <code>
+def flatMap[S](f: (A) => FutureO[S]): FutureO[S] =
+FutureO(
+  fo.flatMap{
+    case Some(a) => f(a).fo
+    case _ => Future.successful(None)
+  }
+)
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Step-by-step</h3>
+                <p>and then a map</p>
+                <pre>
+                    <code>
+def map[S](f: (A) => S): FutureO[S] =
+FutureO(
+  fo.map{
+    case Some(a) => Some(f(a))
+    case _ => None
+  }
+)
+                    </code>
+                </pre>
+            </section>
+
+            <section>
+                <h3>A simple Future Option class</h3>
+                <pre>
+                    <code>
+case class FutureO[A](fo: Future[Option[A]]){
+    def flatMap[S](f: (A) => FutureO[S]): FutureO[S] =
+    FutureO(
+      fo.flatMap{
+        case Some(a) => f(a).fo
+        case _ => Future.successful(None)
+      }
+    )
+
+    def map[S](f: (A) => S): FutureO[S] =
+    FutureO(
+      fo.map{
+        case Some(a) => Some(f(a))
+        case _ => None
+      }
+    )
+}
+                    </code>
+                </pre>
+            </section>
+
+        </section>
+        <section data-background="#dddddd">
+            <section>
+                <h3>Can we make this any more generic?</h3>
+                <p>flatMap and map look very similar - could we reuse some of that code?</p>
+            </section>
+            <section>
+                <p>Lets try and write map in terms of flatMap</p>
+                <pre>
+                    <code>
+def map[S](f: (A) => S): FutureO[S] =
+    flatMap(a => Future.successful(Option(f(a)))
+                    </code>
+                </pre>
+                <p>That works but is a bit messy</p>
+            </section>
+            <section>
+                <p>We should make the logic to 'lift' a value to a FutureO into a seperate method</p>
+                <pre>
+                    <code>
+def unit[A](a: => A): FutureO[A] =
+    FutureO(Future.successful(Option(a)))
+                    </code>
+                </pre>
+
+                <p>Now map can be rewritten as</p>
+                <pre>
+                    <code>
+def map[S](f: (A) => S): FutureO[S] =
+    flatMap(a => unit(f(a))
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Combining flatMap and unit</h3>
+                <p>It turns out that flatMap and unit can be combined to create a whole range of methods, not just map. For example:</p>
+                <pre>
+                    <code>
+def map2[A,B,C](fa: FutureO[A], fb: FutureO[B])(f: (A,B) => C): FutureO[C] =
+for{
+    a <- fa
+    b <- fb
+} yield unit(f(a, b))
+                    </code>
+                </pre>
+                <p>What if we replaced FutureO with Option? This definition would still work fine!</p>
+            </section>
+            <section>
+                <h3>Methods for free</h3>
+                <p>If we put all of these methods into a trait, <i>all we would ever need to define is flatMap and unit</i>!</p>
+                <p>Not only that, but we could define the trait to work for <i>any type</i>, not just FutureO</p>
+                <p>By convention a trait that does this is called a <b>Monad</b></p>
+            </section>
+        </section>
+
+        <section data-background="#dddddd">
+            <section>
+                <h3>Defining the Monad</h3>
+                <p>Let's define the Monad based on what we already know about FutureO</p>
+            </section>
+
+            <section>
+                <h3>Type constructors</h3>
+                <p>What will we need to define flatMap in the trait?</p>
+                <pre>
+                    <code>
+ def flatMap[S](f: (A) => FutureO[S]): FutureO[S]
+                    </code>
+                </pre>
+                <p>It returns a FutureO, so we need a similar <i>type constructor</i> in the trait, call it F</p>
+                <p>We will also need access to the type A</p>
+                <pre>
+                    <code>
+trait Monad[A, F[_]]
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Add in the methods</h3>
+                <pre>
+                    <code>
+ def flatMap[S](f: (A) => FutureO[S]): FutureO[S]
+                    </code>
+                </pre>
+                <p>becomes</p>
+                <pre>
+                    <code>
+def flatMap[S](f: (A) => F[S]): F[S]
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Add in the methods</h3>
+                <pre>
+                    <code>
+def unit[A](a: => A): FutureO[A]
+                    </code>
+                </pre>
+                <p>becomes</p>
+                <pre>
+                    <code>
+def unit[A](a: => A): F[A]
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Add in the methods</h3>
+                <pre>
+                    <code>
+def map[S](f: (A) => S): FutureO[S] =
+    flatMap(a => unit(f(a))
+                    </code>
+                </pre>
+                <p>becomes</p>
+                <pre>
+                    <code>
+def map[S](f: (A) => S): F[S] =
+    flatMap(a => unit(f(a))
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>What does FutureO look like now?</h3>
+                <p>Exactly the same, but we don't have to define map!</p>
+                <pre>
+                    <code>
+case class FutureO[A](val fo: Future[Option[A]])
+                        extends Monad[A, FutureO] {
+
+  override def unit[A](a: => A): FutureO[A] =
+    FutureO(
+        Future.successful(Option(a))
+    )
+
+  override def flatMap[S](f: (A) => FutureO[S]): FutureO[S] =
+    FutureO(
+      fo.flatMap{
+        case Some(a) => f(a).fo
+        case _ => Future.successful(None)
+      }
+    )
+}
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>The completed Monad trait</h3>
+                <pre>
+                    <code>
+trait Monad[F[_], A]{
+  def unit[A](a: => A): F[A]
+  def flatMap[S](f: A => F[S]): F[S]
+  def map[S](f: A => S): F[S] =
+    flatMap(a => unit(f(a)))
+}
+                    </code>
+                </pre>
+                <p>We could continue to define map2, or many other methods "once and for all" in the Monad</p>
+            </section>
+        </section>
+        <section data-background="#dddddd">
+            <section>
+                <h3>A generic solution</h3>
+                <p>What if we had to handle a different type?</p>
+                <p>Again ReactiveMongo gives us an example:</p>
+                <pre>
+                    <code>
+def collect[List]
+            (maxDocs: Int, err: ErrorHandler[M[T]])
+            (implicit cbf: CanBuildFrom[M[_], T, M[T]], ec: ExecutionContext)
+                        : Future[List[[T]]
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <p>With our new trait this isn't a problem</p>
+                <p>(Except a sensible definition of flatMap is a bit tricky this time)</p>
+                <pre>
+                    <code>
+case class FutureList[A](val fl: Future[List[A]])
+                        extends Monad[A, FutureList] {
+
+  override def unit[A](a: => A): FutureList[A] =
+    FutureList(Future.successful(List(a))
+
+  override def flatMap[S](f: (A) => FutureList[S]): FutureList[S] =
+    FutureList(
+      fl.flatMap { list =>
+        val futures: List[Future[List[S]]] = list.map { a =>
+          f(a).fl
+        }
+        Future.reduce(futures){ (l, r) =>
+          l ++ r
+        }
+      }
+    )
+}
+                    </code>
+                </pre>
+            </section>
+        </section>
+        <section data-background="#dddddd">
+            <section>
+                <h3>Okay I did leave something out</h3>
+            </section>
+            <section>
+                <h3>Monad laws</h3>
+                <p>For our class to be a true Monad flatMap and unit have to follow some (sensible) rules</p>
+                <p>I won't go into detail, but it's worth thinking about when you define you're own</p>
+            </section>
+            <section>
+                <h3>Associativity - i.e order doesn't matter</h3>
+                <pre>
+                    <code>
+for{
+    a <- monad1
+    b <- monad2
+} yield a + b
+                    </code>
+                </pre>
+                <p>should give the same answer as</p>
+                <pre>
+                    <code>
+for{
+    b <- monad2
+    a <- monad1
+} yield a + b
+                    </code>
+                </pre>
+            </section>
+            <section>
+                <h3>Identity - i.e unit doesn't do much)</h3>
+                <pre>
+                    <code>
+monad flatMap unit shouldBe monad
+                    </code>
+                </pre>
+                <pre>
+                    <code>
+unit(a) flatMap function shouldBe function(a)
+                    </code>
+                </pre>
+            </section>
+        </section>
+        <section data-background="#dddddd">
+            <section>
+                <h3>Its over!</h3>
+                <p>Recommended reading: <b>Functional Programming in Scala</b> (Manning)</p>
+                <p>(Especially the parts on Monad laws and property based testing I skipped over)</p>
+            </section>
+        </section>
+    </div>
+</div>
+
+<script src="lib/js/head.min.js"></script>
+<script src="js/reveal.js"></script>
+
+<script>
+			// More info https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				history: true,
+
+				// More info https://github.com/hakimel/reveal.js#dependencies
+				dependencies: [
+					{ src: 'plugin/markdown/marked.js' },
+					{ src: 'plugin/markdown/markdown.js' },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+				]
+			});
+		</script>
+</body>
+</html>
